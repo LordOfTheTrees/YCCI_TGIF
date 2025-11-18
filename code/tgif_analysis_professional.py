@@ -3,6 +3,20 @@ TGIF A/B Test Analysis - Professional Report Generator
 
 This script generates professional, easily modifiable reports for TGIF frozen snack A/B tests.
 
+Copyright 2025
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an AS IS BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
 Requirements:
 - pandas
 - numpy
@@ -13,9 +27,18 @@ Usage:
     python tgif_analysis_professional.py
 
 Outputs:
-    - tgif_detailed_results.csv (complete detailed results)
-    - tgif_summary_table.csv (landscape summary table)
-    - tgif_summary_table.md (markdown version of summary)
+    All files are saved to separate directories based on statistical test method:
+    - output_chi2/ (for chi-square test results)
+    - output_ttest/ (for one-sided t-test results)
+    
+    Files in each directory (filenames include test method suffix):
+    - tgif_detailed_results_chi2.csv or tgif_detailed_results_ttest.csv (complete detailed results)
+    - tgif_summary_table_chi2.csv or tgif_summary_table_ttest.csv (landscape summary table)
+    - tgif_summary_table_chi2.md or tgif_summary_table_ttest.md (markdown version of summary)
+    - tgif_filtered_results_summary_chi2.csv or tgif_filtered_results_summary_ttest.csv (filtered results for Tests 9, 12, 34)
+    - tgif_detailed_results_with_filters_chi2.csv or tgif_detailed_results_with_filters_ttest.csv (detailed results with filters)
+    - tgif_summary_table_with_filters_chi2.csv or tgif_summary_table_with_filters_ttest.csv (summary table with filters)
+    - tgif_summary_table_with_filters_chi2.md or tgif_summary_table_with_filters_ttest.md (summary markdown with filters)
 """
 
 import pandas as pd
@@ -29,8 +52,14 @@ import argparse
 # CONFIGURATION - EASILY MODIFIABLE
 # ============================================================================
 
-DATA_FILE = 'tgif_firstround_raw.csv'
-CODEBOOK_FILE = 'tgif_2025_codebook.xlsx'  # Optional, for reference
+# File paths (script is in code/ folder, go up one level for data and reference)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+BASE_DIR = os.path.dirname(SCRIPT_DIR)
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+REFERENCE_DIR = os.path.join(BASE_DIR, 'reference')
+
+DATA_FILE = os.path.join(DATA_DIR, 'tgif_firstround_raw.csv')
+CODEBOOK_FILE = os.path.join(DATA_DIR, 'codebook_tgif.xlsx')  # Optional, for reference
 
 # Test numbers to analyze (in ascending order)
 TEST_NUMBERS = sorted([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 
@@ -52,18 +81,96 @@ DEMOGRAPHIC_FILTERS = {
 AGE_THRESHOLD = 45
 
 # Paths to mapping files
-TEST_MAPPING_FILE = 'test_mapping.csv'
+TEST_MAPPING_FILE = os.path.join(REFERENCE_DIR, 'test_mapping.csv')
 
 # Statistical test method: 'chi2' for chi-square test, 'ttest' for one-sided t-test
 # Can be overridden via command-line argument
 STATISTICAL_TEST = 'chi2'  # Default: chi-square test
+
+# Output directory configuration (relative to base directory)
+OUTPUT_BASE_NAME = 'output'  # Base directory name for outputs
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def get_output_directory(test_method=None):
+    """
+    Get output directory path based on test method.
+    
+    Parameters:
+    -----------
+    test_method : str, optional
+        Statistical test method ('chi2' or 'ttest'). Defaults to STATISTICAL_TEST.
+    
+    Returns:
+    --------
+    str
+        Full path to the output directory (e.g., 'output_chi2' or 'output_ttest').
+    """
+    if test_method is None:
+        test_method = STATISTICAL_TEST
+    dir_name = f"{OUTPUT_BASE_NAME}_{test_method}"
+    output_dir = os.path.join(BASE_DIR, dir_name)
+    return output_dir
+
+def ensure_output_directory(test_method=None):
+    """
+    Create output directory if it does not exist.
+    
+    Parameters:
+    -----------
+    test_method : str, optional
+        Statistical test method (chi2 or ttest). Defaults to STATISTICAL_TEST.
+    
+    Returns:
+    --------
+    str
+        Full path to the output directory.
+    """
+    output_dir = get_output_directory(test_method)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"   Created output directory: {output_dir}/")
+    return output_dir
+
+def add_test_suffix_to_filename(filename, test_method=None):
+    """
+    Add test method suffix to filename before extension.
+    
+    Parameters:
+    -----------
+    filename : str
+        Original filename (e.g., 'results.csv').
+    test_method : str, optional
+        Statistical test method ('chi2' or 'ttest'). Defaults to STATISTICAL_TEST.
+    
+    Returns:
+    --------
+    str
+        Filename with test method suffix (e.g., 'results_chi2.csv').
+    """
+    if test_method is None:
+        test_method = STATISTICAL_TEST
+    
+    # Split filename into name and extension
+    name, ext = os.path.splitext(filename)
+    # Add test method suffix
+    return f"{name}_{test_method}{ext}"
 
 # ============================================================================
 # DATA LOADING FUNCTIONS
 # ============================================================================
 
 def load_test_insights():
-    """Load test insight abbreviations from test_mapping.csv"""
+    """
+    Load test insight abbreviations from test_mapping.csv.
+    
+    Returns:
+    --------
+    dict
+        Dictionary mapping test numbers to insight abbreviations.
+    """
     test_insights = {}
     
     try:
@@ -91,7 +198,19 @@ def load_test_insights():
 # ============================================================================
 
 def convert_to_binary(value):
-    """Convert 1-5 scale to binary (0 for 1-3, 1 for 4-5)"""
+    """
+    Convert 1-5 scale to binary (0 for 1-3, 1 for 4-5).
+    
+    Parameters:
+    -----------
+    value : numeric or str
+        Value to convert (1-5 scale).
+    
+    Returns:
+    --------
+    int or float
+        Binary value: 0 for scores 1-3, 1 for scores 4-5, np.nan for invalid values.
+    """
     if pd.isna(value) or value == '' or value == ' ':
         return np.nan
     try:
@@ -106,7 +225,19 @@ def convert_to_binary(value):
         return np.nan
 
 def get_significance_marker(p_value):
-    """Get significance marker for p-value"""
+    """
+    Get significance marker for p-value.
+    
+    Parameters:
+    -----------
+    p_value : float
+        P-value to evaluate.
+    
+    Returns:
+    --------
+    str
+        Significance marker: "✓ (p<0.05)", "~ (p<0.10)", "→ (p<0.20)", or "".
+    """
     if p_value < P_THRESHOLD_STRICT:
         return "✓ (p<0.05)"
     elif p_value < P_THRESHOLD_MODERATE:
@@ -117,7 +248,29 @@ def get_significance_marker(p_value):
         return "✗ (p≥0.20)"
 
 def calculate_chi_square(control_intent, control_n, treatment_intent, treatment_n):
-    """Calculate chi-square test for independence"""
+    """
+    Calculate chi-square test for independence.
+    
+    Parameters:
+    -----------
+    control_intent : int
+        Number of positive responses in control group.
+    control_n : int
+        Total number of responses in control group.
+    treatment_intent : int
+        Number of positive responses in treatment group.
+    treatment_n : int
+        Total number of responses in treatment group.
+    
+    Returns:
+    --------
+    chi2 : float or None
+        Chi-square statistic.
+    p_value : float or None
+        P-value from chi-square test.
+    expected : array or None
+        Expected frequencies.
+    """
     contingency_table = np.array([
         [control_intent, control_n - control_intent],
         [treatment_intent, treatment_n - treatment_intent]
@@ -220,7 +373,19 @@ def calculate_statistical_test(control_data, treatment_data, test_method='chi2')
 # ============================================================================
 
 def prepare_data(df):
-    """Prepare data with binary conversions and demographic variables"""
+    """
+    Prepare data with binary conversions and demographic variables.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        Raw data frame with test responses.
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Data frame with binary conversions and demographic variables added.
+    """
     df = df.copy()
     
     # Convert purchase intent to binary for all tests
@@ -247,7 +412,21 @@ def prepare_data(df):
     return df
 
 def apply_demographic_filter(df, test_num):
-    """Apply demographic filter for a specific test"""
+    """
+    Apply demographic filter for a specific test.
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        Data frame to filter.
+    test_num : int
+        Test number to apply filter for.
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Filtered data frame based on test-specific demographic criteria.
+    """
     if test_num not in DEMOGRAPHIC_FILTERS:
         return df
     
@@ -267,7 +446,21 @@ def apply_demographic_filter(df, test_num):
 # ============================================================================
 
 def analyze_test_dv1(test_num, df):
-    """Analyze DV1 (purchase intent) for a test"""
+    """
+    Analyze DV1 (purchase intent) for a test.
+    
+    Parameters:
+    -----------
+    test_num : int
+        Test number to analyze.
+    df : pandas.DataFrame
+        Data frame with prepared data.
+    
+    Returns:
+    --------
+    dict or None
+        Dictionary with control and treatment results, or None if test cannot be analyzed.
+    """
     test_assignment_col = f'test{test_num}'
     dv1_binary_col = f'dv{test_num}_1_binary'
     
@@ -344,7 +537,21 @@ def analyze_test_dv1(test_num, df):
     }
 
 def analyze_test_dv2(test_num, df):
-    """Analyze DV2 (behavioral question) for a test"""
+    """
+    Analyze DV2 (behavioral question) for a test.
+    
+    Parameters:
+    -----------
+    test_num : int
+        Test number to analyze.
+    df : pandas.DataFrame
+        Data frame with prepared data.
+    
+    Returns:
+    --------
+    dict or None
+        Dictionary with control and treatment results, or None if test cannot be analyzed.
+    """
     test_assignment_col = f'test{test_num}'
     dv2_binary_col = f'dv{test_num}_2_binary'
     
@@ -422,12 +629,29 @@ def analyze_test_dv2(test_num, df):
 # REPORT GENERATION
 # ============================================================================
 
-def generate_detailed_csv(all_results, output_file='tgif_detailed_results.csv'):
-    """Generate detailed CSV report in the requested format
+def generate_detailed_csv(all_results, output_file=None, output_dir=None, test_method=None):
+    """
+    Generate detailed CSV report in the requested format.
     
     Format: Test, Control_DV1_%, Treatment_B_DV1_%, Treatment_B_DV1_Net_Increase, 
             Treatment_B_DV1_P_Value, Treatment_C_DV1_%, ..., Control_DV2_%, 
             Treatment_B_DV2_%, Treatment_B_DV2_P_Value, ...
+    
+    Parameters:
+    -----------
+    all_results : list
+        List of analysis result dictionaries.
+    output_file : str, optional
+        Output filename. Defaults to 'tgif_detailed_results.csv'.
+    output_dir : str, optional
+        Output directory path.
+    test_method : str, optional
+        Statistical test method ('chi2' or 'ttest').
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Generated detailed results data frame.
     """
     
     # Add note about statistical test method
@@ -521,25 +745,53 @@ def generate_detailed_csv(all_results, output_file='tgif_detailed_results.csv'):
     existing_columns = [c for c in columns if c in df_output.columns]
     df_output = df_output[existing_columns]
     
-    # Add a note row at the top indicating the statistical test method
-    # We'll write this manually to preserve the note
-    with open(output_file, 'w', newline='') as f:
-        # Write header with note
-        f.write(f"# Statistical Test Method: {test_method_name}\n")
-        if STATISTICAL_TEST == 'ttest':
-            f.write("# (One-sided t-test: testing if treatment > control)\n")
-        else:
-            f.write("# (Chi-square test: testing for independence)\n")
-        f.write("#\n")
-        # Write CSV data
-        df_output.to_csv(f, index=False)
+    # Set default filename if not provided
+    if output_file is None:
+        output_file = "tgif_detailed_results.csv"
+    
+    # Add test method suffix to filename
+    if test_method:
+        output_file = add_test_suffix_to_filename(output_file, test_method)
+    
+    # Save CSV file (standard format, no comments)
+    if output_dir:
+        output_file = os.path.join(output_dir, output_file)
+    df_output.to_csv(output_file, index=False)
     
     print(f"   Saved: {output_file} (using {test_method_name})")
     return df_output
 
-def generate_summary_table(all_results, output_csv='tgif_summary_table.csv', 
-                          output_md='tgif_summary_table.md', test_insights=None):
-    """Generate landscape summary table"""
+def generate_summary_table(all_results, output_csv=None, 
+                          output_md=None, test_insights=None, output_dir=None, test_method=None):
+    """
+    Generate landscape summary table.
+    
+    Parameters:
+    -----------
+    all_results : list
+        List of analysis result dictionaries.
+    output_csv : str, optional
+        Output CSV filename. Defaults to 'tgif_summary_table.csv'.
+    output_md : str, optional
+        Output markdown filename. Defaults to 'tgif_summary_table.md'.
+    test_insights : dict, optional
+        Dictionary mapping test numbers to insight abbreviations.
+    output_dir : str, optional
+        Output directory path.
+    test_method : str, optional
+        Statistical test method ('chi2' or 'ttest').
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Generated summary table data frame.
+    """
+    if test_method is None:
+        test_method = STATISTICAL_TEST
+    if output_csv is None:
+        output_csv = add_test_suffix_to_filename('tgif_summary_table.csv', test_method)
+    if output_md is None:
+        output_md = add_test_suffix_to_filename('tgif_summary_table.md', test_method)
     
     if test_insights is None:
         test_insights = load_test_insights()
@@ -610,6 +862,10 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
     df_summary = df_summary.sort_values('_sort_key')
     # Remove sort key before saving
     df_summary = df_summary.drop('_sort_key', axis=1)
+    
+    # Save CSV
+    if output_dir:
+        output_csv = os.path.join(output_dir, output_csv)
     df_summary.to_csv(output_csv, index=False)
     print(f"   Saved: {output_csv}")
     
@@ -617,9 +873,9 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
     md_lines = []
     md_lines.append("# TGIF A/B Test Summary Table\n")
     md_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    test_method_name = "One-sided t-test" if STATISTICAL_TEST == 'ttest' else "Chi-square test"
+    test_method_name = "One-sided t-test" if test_method == 'ttest' else "Chi-square test"
     md_lines.append(f"**Statistical Test Method:** {test_method_name}\n")
-    if STATISTICAL_TEST == 'ttest':
+    if test_method == 'ttest':
         md_lines.append("(One-sided t-test: testing if treatment proportion > control proportion)\n")
     else:
         md_lines.append("(Chi-square test: testing for independence between treatment and outcome)\n")
@@ -629,6 +885,9 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
     for _, row in df_summary.iterrows():
         md_lines.append(f"| {row['Test']} | {row['Insight']} | {row['Control_DV1_%']} | {row['Best_Treatment_DV1']} | {row['Best_Treatment_DV1_%']} | {row['Best_Treatment_DV1_P_Value']} | {row['Control_DV2_%']} | {row['Best_Treatment_DV2']} | {row['Best_Treatment_DV2_%']} | {row['Best_Treatment_DV2_P_Value']} |")
     
+    # Save markdown
+    if output_dir:
+        output_md = os.path.join(output_dir, output_md)
     with open(output_md, 'w') as f:
         f.write("\n".join(md_lines))
     print(f"   Saved: {output_md}")
@@ -640,7 +899,14 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
 # ============================================================================
 
 def parse_arguments():
-    """Parse command-line arguments"""
+    """
+    Parse command-line arguments.
+    
+    Returns:
+    --------
+    argparse.Namespace
+        Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser(
         description='TGIF A/B Test Analysis - Professional Report Generator',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -737,18 +1003,22 @@ def main():
     
     print(f"\n   Analyzed {len(all_results)} tests")
     
+    # Create output directory for this test method
+    print("\n3a. Setting up output directory...")
+    output_dir = ensure_output_directory(STATISTICAL_TEST)
+    
     # Load test insights once
-    print("\n3a. Loading test insights...")
+    print("\n3b. Loading test insights...")
     test_insights = load_test_insights()
     print(f"   Loaded {len(test_insights)} test insights")
     
     # Generate detailed CSV report
     print("\n4. Generating detailed CSV report...")
-    generate_detailed_csv(all_results)
+    generate_detailed_csv(all_results, output_dir=output_dir, test_method=STATISTICAL_TEST)
     
     # Generate summary table
     print("\n5. Generating summary table...")
-    generate_summary_table(all_results, test_insights=test_insights)
+    generate_summary_table(all_results, test_insights=test_insights, output_dir=output_dir, test_method=STATISTICAL_TEST)
     
     # Generate filtered results for specific tests and append to main results
     print("\n6. Generating filtered results for Tests 9, 12, and 34...")
@@ -826,24 +1096,40 @@ def main():
             filter_summary_rows.append(row)
         
         df_filtered = pd.DataFrame(filter_summary_rows)
-        df_filtered.to_csv('tgif_filtered_results_summary.csv', index=False)
-        print("   Saved: tgif_filtered_results_summary.csv")
+        filtered_summary_filename = add_test_suffix_to_filename('tgif_filtered_results_summary.csv', STATISTICAL_TEST)
+        filtered_summary_file = os.path.join(output_dir, filtered_summary_filename)
+        df_filtered.to_csv(filtered_summary_file, index=False)
+        print(f"   Saved: {filtered_summary_file}")
         
         # Regenerate detailed CSV and summary with filtered results included
         print("\n7. Regenerating reports with filtered results included...")
-        generate_detailed_csv(all_results, 'tgif_detailed_results_with_filters.csv')
-        generate_summary_table(all_results, 'tgif_summary_table_with_filters.csv', 
-                              'tgif_summary_table_with_filters.md', test_insights=test_insights)
+        filtered_detailed_filename = add_test_suffix_to_filename('tgif_detailed_results_with_filters.csv', STATISTICAL_TEST)
+        filtered_summary_csv_filename = add_test_suffix_to_filename('tgif_summary_table_with_filters.csv', STATISTICAL_TEST)
+        filtered_summary_md_filename = add_test_suffix_to_filename('tgif_summary_table_with_filters.md', STATISTICAL_TEST)
+        generate_detailed_csv(all_results, filtered_detailed_filename, output_dir=output_dir, test_method=STATISTICAL_TEST)
+        generate_summary_table(all_results, filtered_summary_csv_filename, 
+                              filtered_summary_md_filename, test_insights=test_insights, output_dir=output_dir, test_method=STATISTICAL_TEST)
     
     print("\n" + "="*80)
     print("ANALYSIS COMPLETE!")
     print("="*80)
+    print(f"\nAll output files saved to: {output_dir}/")
     print("\nGenerated files:")
-    print("  1. tgif_detailed_results.csv - Complete detailed results")
-    print("  2. tgif_summary_table.csv - Landscape summary table")
-    print("  3. tgif_summary_table.md - Markdown version of summary")
+    detailed_filename = add_test_suffix_to_filename('tgif_detailed_results.csv', STATISTICAL_TEST)
+    summary_csv_filename = add_test_suffix_to_filename('tgif_summary_table.csv', STATISTICAL_TEST)
+    summary_md_filename = add_test_suffix_to_filename('tgif_summary_table.md', STATISTICAL_TEST)
+    print(f"  1. {output_dir}/{detailed_filename} - Complete detailed results")
+    print(f"  2. {output_dir}/{summary_csv_filename} - Landscape summary table")
+    print(f"  3. {output_dir}/{summary_md_filename} - Markdown version of summary")
     if filtered_results:
-        print("  4. tgif_filtered_results_summary.csv - Filtered results for Tests 9, 12, 34")
+        filtered_summary_filename = add_test_suffix_to_filename('tgif_filtered_results_summary.csv', STATISTICAL_TEST)
+        filtered_detailed_filename = add_test_suffix_to_filename('tgif_detailed_results_with_filters.csv', STATISTICAL_TEST)
+        filtered_summary_csv_filename = add_test_suffix_to_filename('tgif_summary_table_with_filters.csv', STATISTICAL_TEST)
+        filtered_summary_md_filename = add_test_suffix_to_filename('tgif_summary_table_with_filters.md', STATISTICAL_TEST)
+        print(f"  4. {output_dir}/{filtered_summary_filename} - Filtered results for Tests 9, 12, 34")
+        print(f"  5. {output_dir}/{filtered_detailed_filename} - Detailed results with filters")
+        print(f"  6. {output_dir}/{filtered_summary_csv_filename} - Summary table with filters")
+        print(f"  7. {output_dir}/{filtered_summary_md_filename} - Summary markdown with filters")
     print("\n")
 
 if __name__ == "__main__":
