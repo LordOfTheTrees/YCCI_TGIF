@@ -1,4 +1,0 @@
-Test,Insight,Control_DV1_%,Best_Treatment_DV1,Best_Treatment_DV1_%,Best_Treatment_DV1_P_Value,Control_DV2_%,Best_Treatment_DV2,Best_Treatment_DV2_%,Best_Treatment_DV2_P_Value
-9 (Filtered: Older Ages (45+)),nostalgia,69.12%,B,72.97%,0.7481,73.53%,F,72.73%,1.0000
-12 (Filtered: Has Children),family oriented influencers,69.05%,F,76.19%,0.3870,64.29%,E,75.64%,0.1612
-34 (Filtered: Older Ages (45+)),TGIF nostalgia,77.03%,D,80.25%,0.7697,66.22%,D,74.07%,0.3715
