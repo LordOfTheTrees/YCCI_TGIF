@@ -1,3 +1,6 @@
+# Statistical Test Method: Chi-square test
+# (Chi-square test: testing for independence)
+#
 Test,Control_DV1_%,Treatment_B_DV1_%,Treatment_B_DV1_Net_Increase,Treatment_B_DV1_P_Value,Treatment_C_DV1_%,Treatment_C_DV1_Net_Increase,Treatment_C_DV1_P_Value,Treatment_D_DV1_%,Treatment_D_DV1_Net_Increase,Treatment_D_DV1_P_Value,Treatment_E_DV1_%,Treatment_E_DV1_Net_Increase,Treatment_E_DV1_P_Value,Treatment_F_DV1_%,Treatment_F_DV1_Net_Increase,Treatment_F_DV1_P_Value,Control_DV2_%,Treatment_B_DV2_%,Treatment_B_DV2_P_Value,Treatment_C_DV2_%,Treatment_C_DV2_P_Value,Treatment_D_DV2_%,Treatment_D_DV2_P_Value,Treatment_E_DV2_%,Treatment_E_DV2_P_Value,Treatment_F_DV2_%,Treatment_F_DV2_P_Value
 1,53.16,45.58,-7.59,0.2265,55.97,2.81,0.6968,52.23,-0.94,0.9574,53.29,0.12,1.0000,62.42,9.26,0.1214,68.99,66.67,0.7558,71.07,0.7780,67.52,0.8733,65.13,0.5476,71.97,0.6472
 2,60.39,60.26,-0.13,1.0000,61.33,0.94,0.9593,60.00,-0.39,1.0000,65.54,5.15,0.4195,68.15,7.76,0.1901,85.06,85.90,0.9627,86.00,0.9453,85.33,1.0000,85.81,0.9836,88.54,0.4613

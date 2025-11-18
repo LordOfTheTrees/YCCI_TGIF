@@ -20,9 +20,10 @@ Outputs:
 
 import pandas as pd
 import numpy as np
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency, ttest_ind
 from datetime import datetime
 import os
+import argparse
 
 # ============================================================================
 # CONFIGURATION - EASILY MODIFIABLE
@@ -49,6 +50,41 @@ DEMOGRAPHIC_FILTERS = {
 
 # Age threshold for "older ages" (in years)
 AGE_THRESHOLD = 45
+
+# Paths to mapping files
+TEST_MAPPING_FILE = 'test_mapping.csv'
+
+# Statistical test method: 'chi2' for chi-square test, 'ttest' for one-sided t-test
+# Can be overridden via command-line argument
+STATISTICAL_TEST = 'chi2'  # Default: chi-square test
+
+# ============================================================================
+# DATA LOADING FUNCTIONS
+# ============================================================================
+
+def load_test_insights():
+    """Load test insight abbreviations from test_mapping.csv"""
+    test_insights = {}
+    
+    try:
+        mapping_df = pd.read_csv(TEST_MAPPING_FILE)
+        for _, row in mapping_df.iterrows():
+            test_key = row['Test']
+            if pd.notna(test_key):
+                test_key_str = str(test_key).strip()
+                if test_key_str.startswith('Test '):
+                    test_num_str = test_key_str.replace('Test ', '').strip()
+                    try:
+                        test_num = int(test_num_str)
+                        insight = row['Insight']
+                        if pd.notna(insight):
+                            test_insights[test_num] = str(insight).strip()
+                    except ValueError:
+                        continue
+    except Exception as e:
+        print(f"Warning: Could not load {TEST_MAPPING_FILE}: {e}")
+    
+    return test_insights
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -97,6 +133,87 @@ def calculate_chi_square(control_intent, control_n, treatment_intent, treatment_
         return chi2, p_value, expected
     except:
         return None, None, None
+
+def calculate_one_sided_ttest(control_data, treatment_data):
+    """
+    Calculate one-sided t-test for binary data (testing if treatment > control)
+    
+    Parameters:
+    -----------
+    control_data : array-like
+        Binary data (0/1) for control group
+    treatment_data : array-like
+        Binary data (0/1) for treatment group
+    
+    Returns:
+    --------
+    t_stat : float or None
+        t-statistic
+    p_value : float or None
+        One-sided p-value (testing treatment > control)
+    """
+    control_data = np.array(control_data)
+    treatment_data = np.array(treatment_data)
+    
+    # Check if we have valid data
+    if len(control_data) == 0 or len(treatment_data) == 0:
+        return None, None
+    
+    # Remove any NaN values
+    control_data = control_data[~np.isnan(control_data)]
+    treatment_data = treatment_data[~np.isnan(treatment_data)]
+    
+    if len(control_data) == 0 or len(treatment_data) == 0:
+        return None, None
+    
+    try:
+        # Perform one-sided t-test (alternative='greater' tests if treatment mean > control mean)
+        t_stat, p_value_two_sided = ttest_ind(treatment_data, control_data, equal_var=False)
+        
+        # Convert to one-sided p-value
+        # If t_stat > 0, treatment mean > control mean, so p_one_sided = p_two_sided / 2
+        # If t_stat <= 0, treatment mean <= control mean, so p_one_sided = 1 - p_two_sided / 2
+        if t_stat > 0:
+            p_value_one_sided = p_value_two_sided / 2
+        else:
+            p_value_one_sided = 1 - (p_value_two_sided / 2)
+        
+        return t_stat, p_value_one_sided
+    except:
+        return None, None
+
+def calculate_statistical_test(control_data, treatment_data, test_method='chi2'):
+    """
+    Calculate statistical test based on method specified
+    
+    Parameters:
+    -----------
+    control_data : array-like
+        Binary data (0/1) for control group
+    treatment_data : array-like
+        Binary data (0/1) for treatment group
+    test_method : str
+        'chi2' for chi-square test, 'ttest' for one-sided t-test
+    
+    Returns:
+    --------
+    test_stat : float or None
+        Test statistic (chi2 or t-stat)
+    p_value : float or None
+        P-value
+    """
+    if test_method == 'ttest':
+        t_stat, p_value = calculate_one_sided_ttest(control_data, treatment_data)
+        return t_stat, p_value, None  # Return None for expected (not applicable for t-test)
+    else:  # Default to chi-square
+        control_intent = np.sum(control_data)
+        control_n = len(control_data)
+        treatment_intent = np.sum(treatment_data)
+        treatment_n = len(treatment_data)
+        chi2, p_value, expected = calculate_chi_square(
+            control_intent, control_n, treatment_intent, treatment_n
+        )
+        return chi2, p_value, expected
 
 # ============================================================================
 # DATA PREPARATION
@@ -195,9 +312,9 @@ def analyze_test_dv1(test_num, df):
         net_increase = treatment_pct - control_pct
         lift_pct = ((treatment_pct - control_pct) / control_pct * 100) if control_pct > 0 else 0
         
-        # Chi-square test
-        chi2, p_value, expected = calculate_chi_square(
-            control_intent, control_n, treatment_intent, treatment_n
+        # Statistical test (chi-square or one-sided t-test)
+        test_stat, p_value, expected = calculate_statistical_test(
+            control_data.values, treatment_data.values, test_method=STATISTICAL_TEST
         )
         
         if p_value is None:
@@ -211,7 +328,8 @@ def analyze_test_dv1(test_num, df):
             'net_increase': net_increase,
             'lift_pct': lift_pct,
             'p_value': p_value,
-            'chi2': chi2
+            'test_stat': test_stat,
+            'test_method': STATISTICAL_TEST
         })
     
     # Sort by lift (descending)
@@ -270,9 +388,9 @@ def analyze_test_dv2(test_num, df):
         # Calculate lift
         net_increase = treatment_pct - control_pct
         
-        # Chi-square test
-        chi2, p_value, expected = calculate_chi_square(
-            control_intent, control_n, treatment_intent, treatment_n
+        # Statistical test (chi-square or one-sided t-test)
+        test_stat, p_value, expected = calculate_statistical_test(
+            control_data.values, treatment_data.values, test_method=STATISTICAL_TEST
         )
         
         if p_value is None:
@@ -285,7 +403,8 @@ def analyze_test_dv2(test_num, df):
             'pct': treatment_pct,
             'net_increase': net_increase,
             'p_value': p_value,
-            'chi2': chi2
+            'test_stat': test_stat,
+            'test_method': STATISTICAL_TEST
         })
     
     # Sort by lift (descending)
@@ -310,6 +429,9 @@ def generate_detailed_csv(all_results, output_file='tgif_detailed_results.csv'):
             Treatment_B_DV1_P_Value, Treatment_C_DV1_%, ..., Control_DV2_%, 
             Treatment_B_DV2_%, Treatment_B_DV2_P_Value, ...
     """
+    
+    # Add note about statistical test method
+    test_method_name = "One-sided t-test" if STATISTICAL_TEST == 'ttest' else "Chi-square test"
     
     # First, determine all possible treatment letters across all tests
     all_treatment_letters = set()
@@ -379,6 +501,7 @@ def generate_detailed_csv(all_results, output_file='tgif_detailed_results.csv'):
         rows.append(row)
     
     # Create DataFrame with consistent column order
+    # Add statistical test method as first data row (after header)
     columns = ['Test', 'Control_DV1_%']
     for letter in all_treatment_letters:
         columns.extend([f'Treatment_{letter}_DV1_%', 
@@ -397,13 +520,29 @@ def generate_detailed_csv(all_results, output_file='tgif_detailed_results.csv'):
     # Reorder columns
     existing_columns = [c for c in columns if c in df_output.columns]
     df_output = df_output[existing_columns]
-    df_output.to_csv(output_file, index=False)
-    print(f"   Saved: {output_file}")
+    
+    # Add a note row at the top indicating the statistical test method
+    # We'll write this manually to preserve the note
+    with open(output_file, 'w', newline='') as f:
+        # Write header with note
+        f.write(f"# Statistical Test Method: {test_method_name}\n")
+        if STATISTICAL_TEST == 'ttest':
+            f.write("# (One-sided t-test: testing if treatment > control)\n")
+        else:
+            f.write("# (Chi-square test: testing for independence)\n")
+        f.write("#\n")
+        # Write CSV data
+        df_output.to_csv(f, index=False)
+    
+    print(f"   Saved: {output_file} (using {test_method_name})")
     return df_output
 
 def generate_summary_table(all_results, output_csv='tgif_summary_table.csv', 
-                          output_md='tgif_summary_table.md'):
+                          output_md='tgif_summary_table.md', test_insights=None):
     """Generate landscape summary table"""
+    
+    if test_insights is None:
+        test_insights = load_test_insights()
     
     rows = []
     
@@ -413,9 +552,14 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
         if isinstance(test_num, str) and '_filtered' in test_num:
             test_display = test_num
             test_num_for_sort = int(test_num.split('_')[0])
+            base_test_num = test_num_for_sort
         else:
             test_display = test_num
             test_num_for_sort = test_num
+            base_test_num = test_num
+        
+        # Get insight abbreviation
+        insight_abbr = test_insights.get(base_test_num, "")
         
         dv1_result = result['dv1']
         dv2_result = result.get('dv2')
@@ -446,6 +590,7 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
         
         row = {
             'Test': test_display,
+            'Insight': insight_abbr,
             '_sort_key': test_num_for_sort,
             'Control_DV1_%': f"{dv1_result['control_pct']:.2f}%",
             'Best_Treatment_DV1': best_dv1_letter,
@@ -472,11 +617,17 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
     md_lines = []
     md_lines.append("# TGIF A/B Test Summary Table\n")
     md_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    md_lines.append("| Test | Control DV1 % | Best Treatment DV1 | Best Treatment DV1 % | Best Treatment DV1 P-Value | Control DV2 % | Best Treatment DV2 | Best Treatment DV2 % | Best Treatment DV2 P-Value |")
-    md_lines.append("|------|---------------|-------------------|---------------------|---------------------------|---------------|-------------------|---------------------|---------------------------|")
+    test_method_name = "One-sided t-test" if STATISTICAL_TEST == 'ttest' else "Chi-square test"
+    md_lines.append(f"**Statistical Test Method:** {test_method_name}\n")
+    if STATISTICAL_TEST == 'ttest':
+        md_lines.append("(One-sided t-test: testing if treatment proportion > control proportion)\n")
+    else:
+        md_lines.append("(Chi-square test: testing for independence between treatment and outcome)\n")
+    md_lines.append("| Test | Insight | Control DV1 % | Best Treatment DV1 | Best Treatment DV1 % | Best Treatment DV1 P-Value | Control DV2 % | Best Treatment DV2 | Best Treatment DV2 % | Best Treatment DV2 P-Value |")
+    md_lines.append("|------|---------|---------------|-------------------|---------------------|---------------------------|---------------|-------------------|---------------------|---------------------------|")
     
     for _, row in df_summary.iterrows():
-        md_lines.append(f"| {row['Test']} | {row['Control_DV1_%']} | {row['Best_Treatment_DV1']} | {row['Best_Treatment_DV1_%']} | {row['Best_Treatment_DV1_P_Value']} | {row['Control_DV2_%']} | {row['Best_Treatment_DV2']} | {row['Best_Treatment_DV2_%']} | {row['Best_Treatment_DV2_P_Value']} |")
+        md_lines.append(f"| {row['Test']} | {row['Insight']} | {row['Control_DV1_%']} | {row['Best_Treatment_DV1']} | {row['Best_Treatment_DV1_%']} | {row['Best_Treatment_DV1_P_Value']} | {row['Control_DV2_%']} | {row['Best_Treatment_DV2']} | {row['Best_Treatment_DV2_%']} | {row['Best_Treatment_DV2_P_Value']} |")
     
     with open(output_md, 'w') as f:
         f.write("\n".join(md_lines))
@@ -488,10 +639,47 @@ def generate_summary_table(all_results, output_csv='tgif_summary_table.csv',
 # MAIN ANALYSIS
 # ============================================================================
 
+def parse_arguments():
+    """Parse command-line arguments"""
+    parser = argparse.ArgumentParser(
+        description='TGIF A/B Test Analysis - Professional Report Generator',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python tgif_analysis_professional.py                    # Use chi-square (default)
+  python tgif_analysis_professional.py --test-method chi2  # Use chi-square
+  python tgif_analysis_professional.py --test-method ttest # Use one-sided t-test
+  python tgif_analysis_professional.py -t ttest           # Short form
+        """
+    )
+    parser.add_argument(
+        '--test-method', '-t',
+        type=str,
+        choices=['chi2', 'ttest'],
+        default=STATISTICAL_TEST,
+        help='Statistical test method: "chi2" for chi-square test (default), "ttest" for one-sided t-test'
+    )
+    return parser.parse_args()
+
 def main():
+    # Parse command-line arguments
+    args = parse_arguments()
+    
+    # Use command-line argument if provided, otherwise use default from config
+    global STATISTICAL_TEST
+    STATISTICAL_TEST = args.test_method
+    
     print("="*80)
     print("TGIF A/B TEST ANALYSIS - PROFESSIONAL REPORT GENERATOR")
     print("="*80)
+    
+    # Display statistical test method
+    test_method_name = "One-sided t-test" if STATISTICAL_TEST == 'ttest' else "Chi-square test"
+    print(f"\nStatistical Test Method: {test_method_name}")
+    if STATISTICAL_TEST == 'ttest':
+        print("  (Testing if treatment proportion > control proportion)")
+    else:
+        print("  (Testing for independence between treatment and outcome)")
     
     # Load data
     print("\n1. Loading data...")
@@ -549,13 +737,18 @@ def main():
     
     print(f"\n   Analyzed {len(all_results)} tests")
     
+    # Load test insights once
+    print("\n3a. Loading test insights...")
+    test_insights = load_test_insights()
+    print(f"   Loaded {len(test_insights)} test insights")
+    
     # Generate detailed CSV report
     print("\n4. Generating detailed CSV report...")
     generate_detailed_csv(all_results)
     
     # Generate summary table
     print("\n5. Generating summary table...")
-    generate_summary_table(all_results)
+    generate_summary_table(all_results, test_insights=test_insights)
     
     # Generate filtered results for specific tests and append to main results
     print("\n6. Generating filtered results for Tests 9, 12, and 34...")
@@ -602,6 +795,9 @@ def main():
         filter_summary_rows = []
         for result in filtered_results:
             test_num = result['test_number']
+            # Get insight abbreviation
+            insight_abbr = test_insights.get(test_num, "")
+            
             dv1_result = result['dv1']
             dv2_result = result.get('dv2')
             
@@ -617,6 +813,7 @@ def main():
             
             row = {
                 'Test': f"{test_num} (Filtered: {result.get('filter_description', '')})",
+                'Insight': insight_abbr,
                 'Control_DV1_%': f"{dv1_result['control_pct']:.2f}%",
                 'Best_Treatment_DV1': best_dv1['treatment'],
                 'Best_Treatment_DV1_%': f"{best_dv1['pct']:.2f}%",
@@ -636,7 +833,7 @@ def main():
         print("\n7. Regenerating reports with filtered results included...")
         generate_detailed_csv(all_results, 'tgif_detailed_results_with_filters.csv')
         generate_summary_table(all_results, 'tgif_summary_table_with_filters.csv', 
-                              'tgif_summary_table_with_filters.md')
+                              'tgif_summary_table_with_filters.md', test_insights=test_insights)
     
     print("\n" + "="*80)
     print("ANALYSIS COMPLETE!")
